@@ -1294,6 +1294,141 @@ function addCourseFolderToBookmark() {
     courseFolders.map(folder => `<option value="${folder}">${folder}</option>`).join('');
 }
 
+//----------------------------------------
+//Lionel: AI FUNCTIONS (Summaries, Study Assistant, Recommendations)
+//----------------------------------------
+
+async function getActivePageText() {
+  if (!activeTabId) return '';
+  const webview = document.querySelector(`webview[data-tab-id="${activeTabId}"]`);
+  if (!webview) return '';
+
+  try {
+    const text = await webview.executeJavaScript(`
+      (function(){
+        const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null, false);
+        let out = '';
+        while(walker.nextNode()) {
+          const t = walker.currentNode.nodeValue;
+          if (t && t.trim().length) out += t.trim() + '\\n';
+        }
+        out;
+      })();
+    `, true);
+    return text || '';
+  } catch {
+    const tab = tabs.find(t => t.id === activeTabId);
+    return `URL_ONLY:: ${tab ? tab.url : ''}`;
+  }
+}
+
+async function summarizeActiveTab() {
+  const responseEl = document.getElementById('aiResponse');
+  responseEl.innerHTML = '<div style="color:#888">Summarizing…</div>';
+  const text = await getActivePageText();
+
+  const system = [
+    "You are a concise study summarizer.",
+    "Output:",
+    "• 5–8 bullet key points",
+    "• Key terms",
+    "• One-sentence TL;DR"
+  ].join('\n');
+
+  const user = text.startsWith('URL_ONLY::')
+    ? `Summarize the page at ${text.replace('URL_ONLY::','').trim()} for a student.`
+    : `Summarize this page:\n\n${text.slice(0, 15000)}`;
+
+  const json = await window.ai.respond({
+    input: [
+      { role: "system", content: system },
+      { role: "user", content: user }
+    ]
+  });
+
+  const out = json.output_text || "No output";
+  responseEl.textContent = out;
+  showMicroFeedback("✅ Summary ready!");
+}
+
+async function studyAssistant(question) {
+  const responseEl = document.getElementById('aiResponse');
+  responseEl.innerHTML = '<div style="color:#888">Thinking…</div>';
+
+  const recentHistory = (history || []).slice(0, 20)
+    .map(h => `• ${h.title} — ${h.url}`).join('\n');
+
+  const recentNotes = (notes || []).slice(0, 20)
+    .map(n => `• [${n.folder}] ${n.text}`).join('\n');
+
+  const sys = [
+    "You are a helpful study assistant.",
+    "Prefer grounded answers; if uncertain, say so.",
+    "Explain in simple structured steps if helpful."
+  ].join('\n');
+
+  const prompt = [
+    `User question: ${question}`,
+    `Relevant notes:\n${recentNotes || '(none)'}`,
+    `Recent browsing:\n${recentHistory || '(none)'}`
+  ].join('\n\n');
+
+  const json = await window.ai.respond({
+    input: [
+      { role: "system", content: sys },
+      { role: "user", content: prompt }
+    ]
+  });
+
+  responseEl.textContent = json.output_text || "No output";
+  showMicroFeedback("📘 Study answer ready!");
+}
+
+//
+function cosine(a, b) {
+  let dot=0, na=0, nb=0;
+  for (let i=0;i<a.length;i++){
+    dot+=a[i]*b[i];
+    na+=a[i]*a[i];
+    nb+=b[i]*b[i];
+  }
+  return dot / (Math.sqrt(na)*Math.sqrt(nb) + 1e-9);
+}
+
+async function recommendContent(userGoalText) {
+  const responseEl = document.getElementById('aiResponse');
+  responseEl.innerHTML = '<div style="color:#888">Finding recommendations…</div>';
+
+  const candidates = [
+    ...(history || []).slice(0,150).map(h => ({kind:"history",title:h.title,url:h.url})),
+    ...(bookmarks || []).map(b => ({kind:"bookmark",title:b.title,url:b.url}))
+  ];
+  if (candidates.length === 0) {
+    responseEl.textContent = "Not enough data.";
+    return;
+  }
+
+  const texts = candidates.map(c => `${c.title} | ${c.url}`);
+  const emb = await window.ai.embed(texts);
+  const candVecs = emb.data.map(d => d.embedding);
+
+  const goalRes = await window.ai.embed([userGoalText]);
+  const goalVec = goalRes.data[0].embedding;
+
+  const scored = candidates.map((c, i) => ({
+    ...c,
+    score: cosine(goalVec, candVecs[i])
+  }))
+  .sort((a,b)=>b.score - a.score)
+  .slice(0, 8);
+
+  responseEl.textContent =
+    `Top matches for "${userGoalText}":\n\n` +
+    scored.map(s => `• ${s.title} (${s.kind})\n  ${s.url}`).join("\n");
+  
+  showMicroFeedback("🎯 Recommendations ready!");
+}
+
 function openAIHelper() {
   document.getElementById('aiHelperModal').classList.add('active');
 }
@@ -1301,13 +1436,21 @@ function openAIHelper() {
 function closeAIHelperModal() {
   document.getElementById('aiHelperModal').classList.remove('active');
 }
-
+//---------------------------
+//Lionel:Replaced sendAIQuery 
+//---------------------------
 function sendAIQuery() {
   const query = document.getElementById('aiQueryInput').value.trim();
   if (!query) return;
 
-  const responseEl = document.getElementById('aiResponse');
-  responseEl.innerHTML = '<div style="color: #888; font-style: italic;">AI integration coming soon. This feature will provide instant summaries and definitions.</div>';
-
-  showMicroFeedback('AI Helper feature coming soon!');
+  if (/summari[sz]e|summary|summarize page/i.test(query)) {
+    summarizeActiveTab();
+  } 
+  else if (/recommend|suggest|what next/i.test(query)) {
+    const clean = query.replace(/recommend|suggest/i, '').trim() || 'help me find related content';
+    recommendContent(clean);
+  } 
+  else {
+    studyAssistant(query);
+  }
 }
