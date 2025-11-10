@@ -1121,8 +1121,13 @@
           <textarea class="form-textarea" id="aiQueryInput" placeholder="What would you like help with?"></textarea>
         </div>
         <button class="btn btn-primary" onclick="sendAIQuery()" style="width: 100%; margin-bottom: 16px;">Ask AI</button>
+        # Lionel: ADD AI QUICK-ACTION BUTTONS
+        <div style="display: flex; gap: 8px; margin-bottom: 16px;">
+          <button class="btn btn-secondary" onclick="summarizeActiveTab()" style="flex: 1;">Summarize</button>
+          <button class="btn btn-secondary" onclick="studyAssistant(document.getElementById('aiQueryInput').value)" style="flex: 1;">Study Help</button>
+          <button class="btn btn-secondary" onclick="recommendContent('Find related content')" style="flex: 1;">Recommend</button>
+        </div>
         <div id="aiResponse" style="padding: 16px; background: #2a2a2a; border-radius: 8px; min-height: 100px;"></div>
-        <p style="margin-top: 12px; font-size: 12px; color: #888;">Note: AI integration is a planned feature and will be available in a future update.</p>
       </div>
     </div>
   </div>
